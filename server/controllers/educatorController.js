@@ -86,11 +86,11 @@ export const educatorDashboardData = async () => {
                 enrolledStudentsData.push({
                     courseTitle: course.courseTitle,
                     student
-                })
-            })
+                });
+            });
         }
 
-        res.json({ success: true, dashboardData: { totalEarnings, enrolledStudentsDsts, totalCourses } })
+        res.json({ success: true, dashboardData: { totalEarnings, enrolledStudentsData, totalCourses } })
 
     } catch (error) {
         res.json({ success: false, message: error.message })
