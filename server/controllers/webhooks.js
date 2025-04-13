@@ -59,22 +59,43 @@ export const clerkWebhooks = async (req, res)=>{
 const stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY)
 
 export const stripeWebhooks = async (request, response) => {
+    console.log('Webhook received. Headers:', request.headers);
     const sig = request.headers['stripe-signature'];
+    console.log('Stripe-Signature:', sig);
 
     let event;
-
     try {
-        event = stripeInstance.webhooks.constructEvent(request.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+        const rawBody = request.body;
+        console.log('Raw webhook body:', rawBody);
+        event = stripeInstance.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET);
+        console.log('Constructed event:', {
+            id: event.id,
+            type: event.type,
+            created: new Date(event.created * 1000).toISOString()
+        });
     }
     catch (err) {
-        response.status(400).send(`Webhook Error: ${err.message}`);
+        console.error('Webhook verification failed:', err);
+        return response.status(400).send(`Webhook Error: ${err.message}`);
     }
 
     // Handle the event
     switch (event.type) {
         case 'checkout.session.completed': {
             const session = event.data.object;
+            console.log('Session completed:', {
+                id: session.id,
+                payment_status: session.payment_status,
+                metadata: session.metadata
+            });
+
+            if (!session.metadata || !session.metadata.purchaseId) {
+                console.error('Missing purchaseId in session metadata');
+                break;
+            }
+
             const { purchaseId } = session.metadata;
+            console.log('Processing purchase:', purchaseId);
 
             try {
                 const purchaseData = await Purchase.findById(purchaseId);
@@ -82,19 +103,40 @@ export const stripeWebhooks = async (request, response) => {
                     console.error(`Purchase not found: ${purchaseId}`);
                     break;
                 }
+                console.log('Found purchase:', {
+                    id: purchaseData._id,
+                    status: purchaseData.status,
+                    amount: purchaseData.amount
+                });
 
                 const userData = await User.findById(purchaseData.userId);
+                if (!userData) {
+                    console.error(`User not found: ${purchaseData.userId}`);
+                    break;
+                }
+
                 const courseData = await Course.findById(purchaseData.courseId.toString());
+                if (!courseData) {
+                    console.error(`Course not found: ${purchaseData.courseId}`);
+                    break;
+                }
 
+                console.log('Updating course enrolled students');
                 courseData.enrolledStudents.push(userData);
-                await courseData.save();
+                const courseSaveResult = await courseData.save();
+                console.log('Course save result:', courseSaveResult);
 
+                console.log('Updating user enrolled courses');
                 userData.enrolledCourses.push(courseData._id);
-                await userData.save();
+                const userSaveResult = await userData.save();
+                console.log('User save result:', userSaveResult);
 
+                console.log('Updating purchase status');
                 purchaseData.status = "completed";
-                await purchaseData.save();
-                console.log(`Purchase ${purchaseId} marked as completed`);
+                const purchaseSaveResult = await purchaseData.save();
+                console.log('Purchase save result:', purchaseSaveResult);
+
+                console.log(`Successfully processed purchase ${purchaseId}`);
             } catch (error) {
                 console.error(`Error processing checkout.session.completed: ${error.message}`);
             }
